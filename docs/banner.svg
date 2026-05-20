@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="160" viewBox="0 0 800 160">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f172a"/>
+      <stop offset="100%" style="stop-color:#1e293b"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#3b82f6"/>
+      <stop offset="100%" style="stop-color:#06b6d4"/>
+    </linearGradient>
+  </defs>
+
+  <!-- background -->
+  <rect width="800" height="160" fill="url(#bg)" rx="12"/>
+
+  <!-- accent bar -->
+  <rect x="0" y="0" width="4" height="160" fill="url(#accent)" rx="2"/>
+
+  <!-- icon: bridge symbol -->
+  <g transform="translate(44, 52)">
+    <!-- left pillar -->
+    <rect x="0" y="20" width="6" height="36" fill="#3b82f6" rx="2"/>
+    <!-- right pillar -->
+    <rect x="50" y="20" width="6" height="36" fill="#06b6d4" rx="2"/>
+    <!-- arch -->
+    <path d="M3 38 Q28 8 53 38" stroke="url(#accent)" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+    <!-- road -->
+    <line x1="0" y1="56" x2="56" y2="56" stroke="#64748b" stroke-width="2.5" stroke-linecap="round"/>
+    <!-- dashes -->
+    <line x1="18" y1="56" x2="24" y2="56" stroke="#0f172a" stroke-width="2" stroke-linecap="round"/>
+    <line x1="32" y1="56" x2="38" y2="56" stroke="#0f172a" stroke-width="2" stroke-linecap="round"/>
+  </g>
+
+  <!-- title -->
+  <text x="128" y="76" font-family="'Segoe UI', 'SF Pro Display', system-ui, sans-serif"
+        font-size="38" font-weight="700" letter-spacing="-1">
+    <tspan fill="#f1f5f9">qmt</tspan><tspan fill="url(#accent)">-bridge</tspan>
+  </text>
+
+  <!-- subtitle -->
+  <text x="130" y="108" font-family="'Segoe UI', system-ui, sans-serif"
+        font-size="15" fill="#94a3b8" letter-spacing="0.3">
+    大QMT HTTP + miniQMT xtquant  ·  dual-mode broker bridge  ·  Python CLI
+  </text>
+
+  <!-- right: version pill -->
+  <rect x="650" y="58" width="112" height="28" rx="14" fill="#1e3a5f" opacity="0.9"/>
+  <text x="706" y="77" font-family="'Segoe UI', monospace, sans-serif"
+        font-size="12.5" fill="#60a5fa" text-anchor="middle" letter-spacing="0.5">
+    XtData 49/49
+  </text>
+
+  <rect x="650" y="94" width="112" height="28" rx="14" fill="#1e3a5f" opacity="0.9"/>
+  <text x="706" y="113" font-family="'Segoe UI', monospace, sans-serif"
+        font-size="12.5" fill="#34d399" text-anchor="middle" letter-spacing="0.5">
+    XtTrade 38/38
+  </text>
+</svg>

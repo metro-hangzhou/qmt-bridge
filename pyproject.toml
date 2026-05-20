@@ -14,7 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 server = ["tornado>=6.3"]
-dev = ["pytest>=8.0", "responses>=0.25"]
+dev = ["pytest>=8.0", "responses>=0.25", "pytest-cov>=5.0"]
 
 [project.scripts]
 qmt = "qmt_bridge.cli:main"

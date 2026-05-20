@@ -1,10 +1,21 @@
-# qmt-bridge
+<p align="center">
+  <img src="docs/banner.svg" alt="qmt-bridge" width="800"/>
+</p>
 
-**大QMT / miniQMT 双模 broker bridge — Python 库 + CLI**
-
-[![CI](https://github.com/metro-hangzhou/qmt-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/metro-hangzhou/qmt-bridge/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/qmt-bridge/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
+<p align="center">
+  <a href="https://github.com/metro-hangzhou/qmt-bridge/actions/workflows/ci.yml">
+    <img src="https://github.com/metro-hangzhou/qmt-bridge/actions/workflows/ci.yml/badge.svg" alt="CI"/>
+  </a>
+  <a href="https://codecov.io/gh/metro-hangzhou/qmt-bridge">
+    <img src="https://codecov.io/gh/metro-hangzhou/qmt-bridge/branch/main/graph/badge.svg" alt="Coverage"/>
+  </a>
+  <a href="https://pypi.org/project/qmt-bridge/">
+    <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue" alt="Python"/>
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License"/>
+  </a>
+</p>
 
 ---
 
