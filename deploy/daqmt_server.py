@@ -2,7 +2,7 @@
 """DaQMT in-strategy Tornado HTTP server.
 
 This module is NOT a standalone script. It must be loaded INSIDE the
-DaQMT (´óQMT) strategy runtime so that `get_trade_detail_data`,
+DaQMT (ï¿½ï¿½QMT) strategy runtime so that `get_trade_detail_data`,
 `passorder`, `cancel`, `can_cancel_order` and `ContextInfo` are
 available in the global scope of the strategy file that imports it.
 
@@ -17,10 +17,13 @@ pip, so anything outside the bundled runtime is forbidden.
 import json
 import locale
 import logging
+import os
 
 import tornado.ioloop
 import tornado.web
 from tornado.ioloop import IOLoop
+
+_BRIDGE_SECRET = os.environ.get('DAQMT_BRIDGE_SECRET', '')
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +47,7 @@ ACCOUNT_TYPE_MAP = {
 }
 
 # DaQMT order status codes considered "still alive" (cancelable).
-# 0=Î´±¨ 1=´ý±¨ 5=²¿³É (typical DaQMT mapping)
+# 0=Î´ï¿½ï¿½ 1=ï¿½ï¿½ï¿½ï¿½ 5=ï¿½ï¿½ï¿½ï¿½ (typical DaQMT mapping)
 ACTIVE_ORDER_STATUS = (0, 1, 5)
 
 DIRECTION_BUY = 48  # ord('0') -- DaQMT internal buy flag for stocks
@@ -194,7 +197,7 @@ class BaseHandler(tornado.web.RequestHandler):
 
     def write_json(self, obj, status=200):
         self.set_status(status)
-        # ensure_ascii=False so ÖÐÎÄ names survive; UTF-8 via header above.
+        # ensure_ascii=False so ï¿½ï¿½ï¿½ï¿½ names survive; UTF-8 via header above.
         self.write(json.dumps(obj, ensure_ascii=False, default=str))
 
     def write_error(self, status_code, **kwargs):
@@ -204,6 +207,11 @@ class BaseHandler(tornado.web.RequestHandler):
             'code': status_code,
             'message': self._reason,
         }, ensure_ascii=False))
+
+    def prepare(self):
+        if _BRIDGE_SECRET and self.request.headers.get('X-Bridge-Secret') != _BRIDGE_SECRET:
+            self.set_status(403)
+            self.finish(json.dumps({'error': 'forbidden'}))
 
     def _ctx(self):
         return self.application.ContextInfo
@@ -420,6 +428,37 @@ class CancelOrderHandler(BaseHandler):
         self.write_json({'status': 'success', 'canceled_sys_ids': canceled_sys_ids})
 
 
+class CancelByIdHandler(BaseHandler):
+    """POST /api/order/cancel_by_id  Body: {"order_sys_id": "xxxx", "account": "stock"}
+
+    Cancels a specific order by its m_strOrderSysID. Unlike cancel_order (which
+    matches by code+remaining_volume), this is precise -- no partial-fill ambiguity.
+    """
+
+    def post(self):
+        try:
+            body = _parse_json_body(self)
+        except Exception:
+            self.set_status(400)
+            self.write_json({'error': 'invalid json body'})
+            return
+
+        order_sys_id = body.get('order_sys_id', '')
+        if not order_sys_id:
+            self.set_status(400)
+            self.write_json({'error': 'order_sys_id required'})
+            return
+
+        account_type = _account_type(body.get('account', self.get_argument('account', 'stock')))
+        try:
+            cancel(order_sys_id, self._account(), account_type, self.application.ContextInfo)
+            self.write_json({'status': 'success', 'order_sys_id': order_sys_id})
+        except Exception as exc:
+            logger.error('cancel_by_id(%s) failed: %s', order_sys_id, exc)
+            self.set_status(500)
+            self.write_json({'error': str(exc), 'order_sys_id': order_sys_id})
+
+
 # ---------------------------------------------------------------------------
 # app factory + entrypoint
 # ---------------------------------------------------------------------------
@@ -434,17 +473,16 @@ def make_app():
         (r'/api/order/sell', SellHandler),
         (r'/api/order/cancel_all', CancelAllHandler),
         (r'/api/order/cancel_order', CancelOrderHandler),
+        (r'/api/order/cancel_by_id', CancelByIdHandler),
     ])
 
 
 def init(ContextInfo):
-    """DaQMT strategy entrypoint.
+    """Entry point for å¤§QMT strategy runner.
 
-    DaQMT calls init(ContextInfo) once when the strategy is loaded.
-    We stash the ContextInfo + accountID on the Tornado Application so
-    every handler can reach them via self.application, then start the
-    IOLoop on 127.0.0.1:9000 (loopback only -- never bind to 0.0.0.0
-    from inside a trading runtime).
+    Starts the Tornado HTTP server on 127.0.0.1:9000.
+    NOTE: This call never returns -- IOLoop.current().start() blocks.
+    Any post-startup logic must be scheduled via IOLoop.current().call_later().
     """
     # Try to keep encoding consistent with DaQMT's GBK environment.
     try:
@@ -452,7 +490,6 @@ def init(ContextInfo):
     except Exception:
         pass
 
-    ContextInfo.accountID = 'ÇëÔÚ´ËÉèÖÃÕæÊµ×Ê½ðÕËºÅ'  # TODO set before deploy
     app = make_app()
     app.ContextInfo = ContextInfo
     app.accountID = ContextInfo.accountID
