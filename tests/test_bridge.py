@@ -83,8 +83,8 @@ class TestDaQMTBridgeBalance:
             assert key in result, f"missing key: {key}"
         assert result["total_asset"] == 500000.0
         assert result["available"] == 120000.0
-        assert result["frozen_cash"] == 0.0
-        assert result["market_value"] == 0.0
+        assert result["frozen_cash"] is None
+        assert result["market_value"] is None
 
     @responses_lib.activate
     def test_get_balance_fallback_keys(self):
@@ -180,6 +180,30 @@ class TestDaQMTBridgePositions:
         )
         bridge = DaQMTBridge(base_url=BASE)
         assert bridge.get_positions() == []
+
+    @responses_lib.activate
+    def test_get_positions_direct_dict_shape(self):
+        """Server returns flat code->item dict, no 'holdings' wrapper."""
+        responses_lib.add(
+            responses_lib.GET,
+            f"{BASE}/api/holding",
+            json={
+                "600519.SH": {
+                    "m_nVolume": 300,
+                    "m_nCanUseVolume": 200,
+                    "m_dOpenPrice": 1800.0,
+                    "m_dMarketValue": 540000.0,
+                    "m_nFrozenVolume": 0,
+                    "m_nYesterdayVolume": 300,
+                }
+            },
+            status=200,
+        )
+        bridge = DaQMTBridge(base_url=BASE)
+        positions = bridge.get_positions()
+        assert len(positions) == 1
+        assert positions[0]["code"] == "600519.SH"
+        assert positions[0]["volume"] == 300
 
 
 class TestDaQMTBridgeOrders:
@@ -568,3 +592,66 @@ class TestQMTBridgeAutoMode:
     def test_mode_used_none_before_connect(self):
         bridge = QMTBridge()
         assert bridge.mode_used() == "none"
+
+    def test_cancel_wrong_kwargs_returns_error_not_keyerror(self):
+        """cancel() with missing kwargs must return error dict, not raise KeyError."""
+        with patch.object(DaQMTBridge, "is_available", return_value=True):
+            bridge = QMTBridge({"mode": "daqmt"})
+            bridge.connect()
+        # Pass no kwargs at all
+        result = bridge.cancel()
+        assert isinstance(result, dict)
+        assert "error" in result
+
+    def test_cancel_by_id_delegates_to_daqmt(self):
+        with patch.object(DaQMTBridge, "is_available", return_value=True):
+            bridge = QMTBridge({"mode": "daqmt"})
+            bridge.connect()
+        with patch.object(DaQMTBridge, "cancel_by_id", return_value={"status": "success"}) as mock_cancel:
+            result = bridge.cancel_by_id("SYS001")
+        mock_cancel.assert_called_once_with("SYS001")
+        assert result["status"] == "success"
+
+
+# ============================================================
+# Additional DaQMTBridge tests
+# ============================================================
+
+
+class TestDaQMTBridgeInstanceFlags:
+    @responses_lib.activate
+    def test_frozen_warn_is_per_instance(self):
+        """Two DaQMTBridge instances each warn independently."""
+        for _ in range(2):
+            responses_lib.add(responses_lib.GET, f"{BASE}/api/money/total", json={"total_money": 1.0})
+            responses_lib.add(responses_lib.GET, f"{BASE}/api/money/available", json={"available_money": 1.0})
+        b1 = DaQMTBridge(base_url=BASE)
+        b2 = DaQMTBridge(base_url=BASE)
+        assert b1._frozen_warned is False
+        b1.get_balance()
+        assert b1._frozen_warned is True
+        assert b2._frozen_warned is False  # independent
+
+    def test_disconnect_closes_session(self):
+        bridge = DaQMTBridge(base_url=BASE)
+        with patch.object(bridge.session, "close") as mock_close:
+            bridge.disconnect()
+        mock_close.assert_called_once()
+
+
+class TestDaQMTBridgeCancelById:
+    @responses_lib.activate
+    def test_cancel_by_id(self):
+        responses_lib.add(
+            responses_lib.POST,
+            f"{BASE}/api/order/cancel_by_id",
+            json={"status": "success", "order_sys_id": "SYS001"},
+            status=200,
+        )
+        bridge = DaQMTBridge(base_url=BASE)
+        result = bridge.cancel_by_id("SYS001")
+        assert result.get("status") == "success"
+        assert responses_lib.calls[0].request.body is not None
+        import json
+        body = json.loads(responses_lib.calls[0].request.body)
+        assert body["order_sys_id"] == "SYS001"
