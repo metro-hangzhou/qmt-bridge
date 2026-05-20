@@ -8,11 +8,16 @@ dependencies = [
     "requests>=2.31",
     "loguru>=0.7",
     "polars>=0.20",
+    "typer>=0.12",
+    "rich>=13.0",
 ]
 
 [project.optional-dependencies]
 server = ["tornado>=6.3"]
 dev = ["pytest>=8.0", "responses>=0.25"]
+
+[project.scripts]
+qmt = "qmt_bridge.cli:main"
 
 [build-system]
 requires = ["hatchling"]
