@@ -619,18 +619,14 @@ class TestQMTBridgeAutoMode:
 
 
 class TestDaQMTBridgeInstanceFlags:
-    @responses_lib.activate
-    def test_frozen_warn_is_per_instance(self):
-        """Two DaQMTBridge instances each warn independently."""
-        for _ in range(2):
-            responses_lib.add(responses_lib.GET, f"{BASE}/api/money/total", json={"total_money": 1.0})
-            responses_lib.add(responses_lib.GET, f"{BASE}/api/money/available", json={"available_money": 1.0})
+    def test_trades_warn_is_per_instance(self):
+        """Two DaQMTBridge instances have independent _trades_warned flags."""
         b1 = DaQMTBridge(base_url=BASE)
         b2 = DaQMTBridge(base_url=BASE)
-        assert b1._frozen_warned is False
-        b1.get_balance()
-        assert b1._frozen_warned is True
-        assert b2._frozen_warned is False  # independent
+        assert b1._trades_warned is False
+        b1.get_today_trades()
+        assert b1._trades_warned is True
+        assert b2._trades_warned is False  # independent
 
     def test_disconnect_closes_session(self):
         bridge = DaQMTBridge(base_url=BASE)
