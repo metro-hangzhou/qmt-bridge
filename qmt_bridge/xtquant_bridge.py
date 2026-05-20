@@ -273,8 +273,18 @@ class XtQuantBridge:
     # ---------------- callbacks ----------------
 
     def register_callback(self, callback: Any) -> None:
-        """注册回调对象。callback 需实现 on_disconnected / on_account_status /
-        on_order_callback / on_trade_callback / on_order_error / on_cancel_error。
+        """注册回调对象。callback 需实现以下方法：
+
+        on_disconnected()
+        on_account_status(status)
+        on_stock_order(account, order)
+        on_stock_trade(account, trade)
+        on_order_error(account, order_error)
+        on_cancel_error(account, cancel_error)
+        on_order_stock_async_response(account, seq, order_id)
+        on_cancel_order_stock_async_response(account, seq, order_sysid)
+        on_stock_asset(account, asset)
+
         未连接时 no-op，不 raise。"""
         if not self.is_available():
             return
@@ -287,7 +297,7 @@ class XtQuantBridge:
 
     def buy_async(self, code: str, price: float, volume: int, price_type: int = 11) -> int:
         """异步买入。返回 async seq（int），-1 表示失败。
-        结果通过 on_order_callback 回调推送。"""
+        Result delivered via `on_order_stock_async_response(account, seq, order_id)` callback."""
         if not self.is_available():
             return -1
         try:
@@ -303,7 +313,8 @@ class XtQuantBridge:
             return -1
 
     def sell_async(self, code: str, price: float, volume: int, price_type: int = 11) -> int:
-        """异步卖出。返回 async seq（int），-1 表示失败。"""
+        """异步卖出。返回 async seq（int），-1 表示失败。
+        Result delivered via `on_order_stock_async_response(account, seq, order_id)` callback."""
         if not self.is_available():
             return -1
         try:
@@ -319,7 +330,8 @@ class XtQuantBridge:
             return -1
 
     def cancel_async(self, order_id: int) -> int:
-        """异步撤单。返回 async seq，-1 表示失败。"""
+        """异步撤单。返回 async seq，-1 表示失败。
+        Result delivered via `on_order_stock_async_response(account, seq, order_id)` callback."""
         if not self.is_available():
             return -1
         try:
@@ -341,7 +353,8 @@ class XtQuantBridge:
             return False
 
     def cancel_by_sysid_async(self, market: int, sysid: str) -> int:
-        """按系统委托号异步撤单。返回 async seq，-1 表示失败。"""
+        """按系统委托号异步撤单。返回 async seq，-1 表示失败。
+        Result delivered via `on_cancel_order_stock_async_response(account, seq, order_sysid)` callback."""
         if not self.is_available():
             return -1
         try:

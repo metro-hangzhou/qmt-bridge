@@ -1094,6 +1094,77 @@ class XtDataBridge:
             logger.error("XtDataBridge.get_cb_info: DataFrame build failed: %s", e)
             return pl.DataFrame()
 
+    def _get_xtdata(self):
+        """Return the xtquant.xtdata module, or None if unavailable."""
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            return xtdata
+        except (ImportError, Exception):
+            return None
+
+    def connect(self) -> int:
+        """Connect xtdata to the quote server independently of XtQuantTrader.
+
+        Required before calling get_market_data / subscribe_quote when used
+        without XtQuantTrader (xtdata-only mode).
+        Returns 0 on success, non-zero on failure, -1 if unavailable.
+        """
+        try:
+            xtdata = self._get_xtdata()
+            if xtdata is None:
+                return -1
+            return xtdata.connect() or 0
+        except Exception as e:
+            logger.warning(f"XtDataBridge.connect() failed: {e}")
+            return -1
+
+    def get_quote_server_status(self) -> dict:
+        """Get current quote server connection status.
+
+        Returns dict with server status info, {} on error.
+        """
+        try:
+            xtdata = self._get_xtdata()
+            if xtdata is None:
+                return {}
+            result = xtdata.get_quote_server_status()
+            return result if isinstance(result, dict) else {}
+        except Exception as e:
+            logger.warning(f"XtDataBridge.get_quote_server_status() failed: {e}")
+            return {}
+
+    def watch_quote_server_status(self, callback: "Callable | None" = None) -> int:
+        """Subscribe to quote server status changes.
+
+        callback: called when server status changes
+        Returns subscription id, -1 on error.
+        """
+        try:
+            xtdata = self._get_xtdata()
+            if xtdata is None:
+                return -1
+            seq = xtdata.watch_quote_server_status(callback=callback)
+            return seq if seq is not None else -1
+        except Exception as e:
+            logger.warning(f"XtDataBridge.watch_quote_server_status() failed: {e}")
+            return -1
+
+    def get_option_detail_data(self, code: str) -> dict:
+        """Get option contract detail data.
+
+        Returns option-specific fields: strike price, expiry, option type etc.
+        Returns {} on error or if code is not an option.
+        """
+        try:
+            xtdata = self._get_xtdata()
+            if xtdata is None:
+                return {}
+            result = xtdata.get_option_detail_data(stock_code=code)
+            return result if isinstance(result, dict) else {}
+        except Exception as e:
+            logger.warning(f"XtDataBridge.get_option_detail_data({code}) failed: {e}")
+            return {}
+
     def download_history_data(
         self, code: str, period: str = "1d", start: str = "", end: str = ""
     ) -> bool:
