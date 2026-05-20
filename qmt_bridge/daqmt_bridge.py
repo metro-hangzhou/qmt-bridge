@@ -225,7 +225,6 @@ class DaQMTBridge:
             entry.setdefault("trade_id", "")
             entry.setdefault("order_id", "")
             entry.setdefault("code", self._pick(t, "StockCode", "stock_code", default=""))
-            entry.setdefault("direction", "unknown")
             entry.setdefault("price", 0.0)
             entry.setdefault("volume", 0)
             entry.setdefault("traded_amount", entry.get("amount", 0.0))
