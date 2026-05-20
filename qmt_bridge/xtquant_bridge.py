@@ -250,6 +250,375 @@ class XtQuantBridge:
 
     # ---------------- helpers ----------------
 
+    # ---------------- session / lifecycle ----------------
+
+    def run_forever(self) -> None:
+        """启动事件循环，阻塞调用线程。需在 register_callback 之后调用。"""
+        if not self.is_available():
+            return
+        try:
+            self.xt_trader.run_forever()
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.run_forever() failed: {e}")
+
+    def set_relaxed_response_order_enabled(self, enabled: bool) -> None:
+        """控制响应顺序检查是否宽松。"""
+        if not self.is_available():
+            return
+        try:
+            self.xt_trader.set_relaxed_response_order_enabled(enabled)
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.set_relaxed_response_order_enabled() failed: {e}")
+
+    # ---------------- callbacks ----------------
+
+    def register_callback(self, callback: Any) -> None:
+        """注册回调对象。callback 需实现 on_disconnected / on_account_status /
+        on_order_callback / on_trade_callback / on_order_error / on_cancel_error。
+        未连接时 no-op，不 raise。"""
+        if not self.is_available():
+            return
+        try:
+            self.xt_trader.register_callback(callback)
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.register_callback() failed: {e}")
+
+    # ---------------- async order operations ----------------
+
+    def buy_async(self, code: str, price: float, volume: int, price_type: int = 11) -> int:
+        """异步买入。返回 async seq（int），-1 表示失败。
+        结果通过 on_order_callback 回调推送。"""
+        if not self.is_available():
+            return -1
+        try:
+            seq = self.xt_trader.order_stock_async(
+                self.account, code, 23, volume, price_type, price
+            )
+            logger.info(
+                f"XtQuantBridge buy_async: {code} @ {price} x {volume}, seq={seq}"
+            )
+            return seq if seq is not None else -1
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.buy_async() failed: {e}")
+            return -1
+
+    def sell_async(self, code: str, price: float, volume: int, price_type: int = 11) -> int:
+        """异步卖出。返回 async seq（int），-1 表示失败。"""
+        if not self.is_available():
+            return -1
+        try:
+            seq = self.xt_trader.order_stock_async(
+                self.account, code, 24, volume, price_type, price
+            )
+            logger.info(
+                f"XtQuantBridge sell_async: {code} @ {price} x {volume}, seq={seq}"
+            )
+            return seq if seq is not None else -1
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.sell_async() failed: {e}")
+            return -1
+
+    def cancel_async(self, order_id: int) -> int:
+        """异步撤单。返回 async seq，-1 表示失败。"""
+        if not self.is_available():
+            return -1
+        try:
+            seq = self.xt_trader.cancel_order_stock_async(self.account, order_id)
+            return seq if seq is not None else -1
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.cancel_async() failed: {e}")
+            return -1
+
+    def cancel_by_sysid(self, market: int, sysid: str) -> bool:
+        """按系统委托号撤单（同步）。market: 0=上海, 1=深圳。成功返回 True。"""
+        if not self.is_available():
+            return False
+        try:
+            self.xt_trader.cancel_order_stock_sysid(self.account, market, sysid)
+            return True
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.cancel_by_sysid() failed: {e}")
+            return False
+
+    def cancel_by_sysid_async(self, market: int, sysid: str) -> int:
+        """按系统委托号异步撤单。返回 async seq，-1 表示失败。"""
+        if not self.is_available():
+            return -1
+        try:
+            seq = self.xt_trader.cancel_order_stock_sysid_async(
+                self.account, market, sysid
+            )
+            return seq if seq is not None else -1
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.cancel_by_sysid_async() failed: {e}")
+            return -1
+
+    # ---------------- account management ----------------
+
+    def unsubscribe(self) -> int:
+        """取消账户订阅。成功返回 0。"""
+        if not self.is_available():
+            return -1
+        try:
+            result = self.xt_trader.unsubscribe(self.account)
+            return result if result is not None else -1
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.unsubscribe() failed: {e}")
+            return -1
+
+    def query_account_infos(self) -> list[dict]:
+        """查询本 trader 绑定的所有账户信息。失败返回 []。"""
+        if not self.is_available():
+            return []
+        try:
+            result = self.xt_trader.query_account_infos()
+            if not result:
+                return []
+            return result if isinstance(result, list) else list(result)
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.query_account_infos() failed: {e}")
+            return []
+
+    def query_account_status(self) -> list[dict]:
+        """查询账户状态列表。失败返回 []。"""
+        if not self.is_available():
+            return []
+        try:
+            result = self.xt_trader.query_account_status()
+            if not result:
+                return []
+            return result if isinstance(result, list) else list(result)
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.query_account_status() failed: {e}")
+            return []
+
+    def fund_transfer(self, transfer_type: int, amount: float) -> dict:
+        """资金划转。transfer_type 含义见 xtquant 文档。失败返回 {}。"""
+        if not self.is_available():
+            return {}
+        try:
+            result = self.xt_trader.fund_transfer(self.account, transfer_type, amount)
+            if result is None:
+                return {}
+            return result if isinstance(result, dict) else {"raw": result}
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.fund_transfer() failed: {e}")
+            return {}
+
+    def sync_transaction_from_external(self, transaction: dict) -> bool:
+        """将外部交易记录同步进系统。失败返回 False。"""
+        if not self.is_available():
+            return False
+        try:
+            self.xt_trader.sync_transaction_from_external(transaction)
+            return True
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.sync_transaction_from_external() failed: {e}")
+            return False
+
+    # ---------------- extended queries ----------------
+
+    def query_position_statistics(self) -> list[dict]:
+        """持仓统计（行业/板块分布等）。失败返回 []。"""
+        if not self.is_available():
+            return []
+        try:
+            result = self.xt_trader.query_position_statistics(self.account)
+            if not result:
+                return []
+            return result if isinstance(result, list) else list(result)
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.query_position_statistics() failed: {e}")
+            return []
+
+    def query_new_purchase_limit(self) -> dict:
+        """查询新股申购额度/限额。失败返回 {}。"""
+        if not self.is_available():
+            return {}
+        try:
+            result = self.xt_trader.query_new_purchase_limit(self.account)
+            if result is None:
+                return {}
+            return result if isinstance(result, dict) else {"raw": result}
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.query_new_purchase_limit() failed: {e}")
+            return {}
+
+    def query_ipo_data(self) -> list[dict]:
+        """查询可申购新股信息。失败返回 []。"""
+        if not self.is_available():
+            return []
+        try:
+            result = self.xt_trader.query_ipo_data(self.account)
+            if not result:
+                return []
+            return result if isinstance(result, list) else list(result)
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.query_ipo_data() failed: {e}")
+            return []
+
+    def export_data(self, data_type: str, start: str = "", end: str = "") -> list[dict]:
+        """导出历史数据记录。失败返回 []。"""
+        if not self.is_available():
+            return []
+        try:
+            result = self.xt_trader.export_data(self.account, data_type, start, end)
+            if not result:
+                return []
+            return result if isinstance(result, list) else list(result)
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.export_data() failed: {e}")
+            return []
+
+    def query_data(self, data_type: str, **kwargs) -> list[dict]:
+        """通用查询接口。失败返回 []。"""
+        if not self.is_available():
+            return []
+        try:
+            result = self.xt_trader.query_data(self.account, data_type, **kwargs)
+            if not result:
+                return []
+            return result if isinstance(result, list) else list(result)
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.query_data() failed: {e}")
+            return []
+
+    # ---------------- credit / margin queries ----------------
+
+    def query_credit_detail(self) -> dict:
+        """融资融券账户详情。非信用账户或失败返回 {}。"""
+        if not self.is_available():
+            return {}
+        try:
+            result = self.xt_trader.query_credit_detail(self.account)
+            if result is None:
+                return {}
+            return result if isinstance(result, dict) else {"raw": result}
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.query_credit_detail() failed: {e}")
+            return {}
+
+    def query_stk_compacts(self) -> list[dict]:
+        """查询负债合约。失败返回 []。"""
+        if not self.is_available():
+            return []
+        try:
+            result = self.xt_trader.query_stk_compacts(self.account)
+            if not result:
+                return []
+            return result if isinstance(result, list) else list(result)
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.query_stk_compacts() failed: {e}")
+            return []
+
+    def query_credit_subjects(self) -> list[dict]:
+        """查询标的证券。失败返回 []。"""
+        if not self.is_available():
+            return []
+        try:
+            result = self.xt_trader.query_credit_subjects(self.account)
+            if not result:
+                return []
+            return result if isinstance(result, list) else list(result)
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.query_credit_subjects() failed: {e}")
+            return []
+
+    def query_credit_slo_code(self) -> list[dict]:
+        """查询可融券标的。失败返回 []。"""
+        if not self.is_available():
+            return []
+        try:
+            result = self.xt_trader.query_credit_slo_code(self.account)
+            if not result:
+                return []
+            return result if isinstance(result, list) else list(result)
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.query_credit_slo_code() failed: {e}")
+            return []
+
+    def query_credit_assure(self) -> list[dict]:
+        """查询担保证券。失败返回 []。"""
+        if not self.is_available():
+            return []
+        try:
+            result = self.xt_trader.query_credit_assure(self.account)
+            if not result:
+                return []
+            return result if isinstance(result, list) else list(result)
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.query_credit_assure() failed: {e}")
+            return []
+
+    def query_com_fund(self) -> dict:
+        """查询组合资金。失败返回 {}。"""
+        if not self.is_available():
+            return {}
+        try:
+            result = self.xt_trader.query_com_fund(self.account)
+            if result is None:
+                return {}
+            return result if isinstance(result, dict) else {"raw": result}
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.query_com_fund() failed: {e}")
+            return {}
+
+    def query_com_position(self) -> list[dict]:
+        """查询组合持仓。失败返回 []。"""
+        if not self.is_available():
+            return []
+        try:
+            result = self.xt_trader.query_com_position(self.account)
+            if not result:
+                return []
+            return result if isinstance(result, list) else list(result)
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.query_com_position() failed: {e}")
+            return []
+
+    # ---------------- SMT (securities margin trading) ----------------
+
+    def smt_query_quoter(self, code: str) -> list[dict]:
+        """融券报价查询。失败返回 []。"""
+        if not self.is_available():
+            return []
+        try:
+            result = self.xt_trader.smt_query_quoter(self.account, code)
+            if not result:
+                return []
+            return result if isinstance(result, list) else list(result)
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.smt_query_quoter() failed: {e}")
+            return []
+
+    def smt_negotiate_order_async(self, code: str, volume: int, price: float) -> int:
+        """协议融券异步下单。返回 seq id，-1 表示失败。"""
+        if not self.is_available():
+            return -1
+        try:
+            seq = self.xt_trader.smt_negotiate_order_async(
+                self.account, code, volume, price
+            )
+            return seq if seq is not None else -1
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.smt_negotiate_order_async() failed: {e}")
+            return -1
+
+    def smt_query_compact(self) -> list[dict]:
+        """融券合约查询。失败返回 []。"""
+        if not self.is_available():
+            return []
+        try:
+            result = self.xt_trader.smt_query_compact(self.account)
+            if not result:
+                return []
+            return result if isinstance(result, list) else list(result)
+        except Exception as e:
+            logger.warning(f"XtQuantBridge.smt_query_compact() failed: {e}")
+            return []
+
+    # ---------------- helpers ----------------
+
     @staticmethod
     def _order_to_dict(o) -> dict:
         """xtquant order 对象 -> 统一 dict。order_type: 23=buy, 24=sell。"""
