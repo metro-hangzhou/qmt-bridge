@@ -21,11 +21,29 @@ jobs:
         with:
           version: "latest"
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
-
       - name: Install dependencies
-        run: uv pip install -e ".[dev]" --python ${{ matrix.python-version }}
+        run: uv pip install -e ".[dev]" --system --python ${{ matrix.python-version }}
 
-      - name: Run tests
-        run: uv run --python ${{ matrix.python-version }} pytest tests/ -v
+      - name: pytest
+        run: pytest tests/ -v --python-version ${{ matrix.python-version }}
+        env:
+          PYTHONPATH: .
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install ruff
+        run: uv pip install ruff --system
+
+      - name: ruff check
+        run: ruff check qmt_bridge/
+
+      - name: ruff format check
+        run: ruff format --check qmt_bridge/
