@@ -1137,3 +1137,683 @@ class XtDataBridge:
         except Exception as e:
             logger.error("XtDataBridge.download_with_progress failed: %s", e)
             return False
+
+    # ------------------------------------------------------------------
+    # Group 1: Session lifecycle
+    # ------------------------------------------------------------------
+
+    def run(self) -> None:
+        """Start the xtdata event loop.
+
+        MUST be called after subscribe_quote / subscribe_whole_quote to
+        receive push callbacks. Blocks the calling thread — run in a
+        separate thread if needed. No-op if xtdata is unavailable.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            xtdata.run()
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.run: %s", e)
+
+    def stop(self) -> None:
+        """Stop the xtdata event loop.
+
+        No-op if xtdata is unavailable or does not expose stop().
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            stop_fn = getattr(xtdata, "stop", None)
+            if callable(stop_fn):
+                stop_fn()
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.stop: %s", e)
+
+    # ------------------------------------------------------------------
+    # Group 2: Local data query
+    # ------------------------------------------------------------------
+
+    def get_local_data(
+        self,
+        codes: list[str],
+        period: str = "1d",
+        start: str = "",
+        end: str = "",
+        count: int = -1,
+    ) -> "pl.DataFrame":
+        """Read already-downloaded local cache (no network fetch).
+
+        Same output schema as get_klines.
+        Returns empty DataFrame on error.
+        """
+        if not _POLARS_AVAILABLE:
+            return []  # type: ignore
+
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.get_local_data: xtdata unavailable: %s", e)
+            return _empty_klines_schema()
+
+        try:
+            raw = xtdata.get_local_data(
+                field_list=[],
+                stock_list=codes,
+                period=period,
+                start_time=start,
+                end_time=end,
+                count=count,
+            )
+        except Exception as e:
+            logger.error("XtDataBridge.get_local_data failed: %s", e)
+            return _empty_klines_schema()
+
+        if not raw:
+            return _empty_klines_schema()
+
+        frames = []
+        for code, field_dict in raw.items():
+            if not isinstance(field_dict, dict):
+                continue
+            try:
+                times_raw = field_dict.get("time", [])
+                n = len(times_raw)
+                if n == 0:
+                    continue
+                parsed_times = [_parse_qmt_time(t) for t in times_raw]
+                df = pl.DataFrame({
+                    "code":   [code] * n,
+                    "time":   parsed_times,
+                    "open":   [float(v) for v in field_dict.get("open",   [0.0] * n)],
+                    "high":   [float(v) for v in field_dict.get("high",   [0.0] * n)],
+                    "low":    [float(v) for v in field_dict.get("low",    [0.0] * n)],
+                    "close":  [float(v) for v in field_dict.get("close",  [0.0] * n)],
+                    "volume": [float(v) for v in field_dict.get("volume", [0.0] * n)],
+                    "amount": [float(v) for v in field_dict.get("amount", [0.0] * n)],
+                }).with_columns(pl.col("time").cast(pl.Datetime))
+                frames.append(df)
+            except Exception as e:
+                logger.error("XtDataBridge.get_local_data: failed for %s: %s", code, e)
+
+        if not frames:
+            return _empty_klines_schema()
+
+        try:
+            return pl.concat(frames)
+        except Exception as e:
+            logger.error("XtDataBridge.get_local_data: concat failed: %s", e)
+            return _empty_klines_schema()
+
+    def get_full_kline(
+        self,
+        codes: list[str],
+        period: str = "1d",
+        start: str = "",
+        end: str = "",
+        count: int = -1,
+    ) -> "pl.DataFrame":
+        """Fetch extended OHLCV + additional fields vs get_klines.
+
+        Returns a Polars DataFrame; same base schema as get_klines but may
+        include extra columns depending on xtdata version.
+        Returns empty DataFrame on error.
+        """
+        if not _POLARS_AVAILABLE:
+            return []  # type: ignore
+
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.get_full_kline: xtdata unavailable: %s", e)
+            return _empty_klines_schema()
+
+        try:
+            raw = xtdata.get_full_kline(
+                stock_list=codes,
+                period=period,
+                start_time=start,
+                end_time=end,
+                count=count,
+            )
+        except Exception as e:
+            logger.error("XtDataBridge.get_full_kline failed: %s", e)
+            return _empty_klines_schema()
+
+        if not raw:
+            return _empty_klines_schema()
+
+        frames = []
+        for code, field_dict in raw.items():
+            if not isinstance(field_dict, dict):
+                continue
+            try:
+                times_raw = field_dict.get("time", [])
+                n = len(times_raw)
+                if n == 0:
+                    continue
+                parsed_times = [_parse_qmt_time(t) for t in times_raw]
+                row_data: dict = {
+                    "code":   [code] * n,
+                    "time":   parsed_times,
+                    "open":   [float(v) for v in field_dict.get("open",   [0.0] * n)],
+                    "high":   [float(v) for v in field_dict.get("high",   [0.0] * n)],
+                    "low":    [float(v) for v in field_dict.get("low",    [0.0] * n)],
+                    "close":  [float(v) for v in field_dict.get("close",  [0.0] * n)],
+                    "volume": [float(v) for v in field_dict.get("volume", [0.0] * n)],
+                    "amount": [float(v) for v in field_dict.get("amount", [0.0] * n)],
+                }
+                # Include any extra fields xtdata returns beyond the base schema
+                for extra_key, extra_vals in field_dict.items():
+                    if extra_key not in row_data and hasattr(extra_vals, "__len__") and len(extra_vals) == n:
+                        try:
+                            row_data[extra_key] = [float(v) for v in extra_vals]
+                        except Exception:
+                            pass
+                df = pl.DataFrame(row_data).with_columns(pl.col("time").cast(pl.Datetime))
+                frames.append(df)
+            except Exception as e:
+                logger.error("XtDataBridge.get_full_kline: failed for %s: %s", code, e)
+
+        if not frames:
+            return _empty_klines_schema()
+
+        try:
+            return pl.concat(frames, how="diagonal")
+        except Exception as e:
+            logger.error("XtDataBridge.get_full_kline: concat failed: %s", e)
+            return _empty_klines_schema()
+
+    # ------------------------------------------------------------------
+    # Group 3: Download methods
+    # ------------------------------------------------------------------
+
+    def download_index_weight(self, index_code: str = "") -> bool:
+        """Download index constituent weight data.
+
+        Returns True on success, False on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            if index_code:
+                xtdata.download_index_weight(index_code=index_code)
+            else:
+                xtdata.download_index_weight()
+            return True
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.download_index_weight failed: %s", e)
+            return False
+
+    def download_financial_data(self, code: str, table: str = "") -> bool:
+        """Download financial statement data for a single stock code.
+
+        Returns True on success, False on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            xtdata.download_financial_data(stock_code=code, table_name=table)
+            return True
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.download_financial_data(%s) failed: %s", code, e)
+            return False
+
+    def download_financial_data2(
+        self, codes: list[str], tables: "list[str] | None" = None
+    ) -> bool:
+        """Batch-download financial statement data for multiple codes.
+
+        Returns True on success, False on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            xtdata.download_financial_data2(
+                stock_list=codes,
+                table_list=tables or [],
+            )
+            return True
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.download_financial_data2 failed: %s", e)
+            return False
+
+    def download_sector_data(self) -> bool:
+        """Download all sector/industry classification data.
+
+        Returns True on success, False on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            xtdata.download_sector_data()
+            return True
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.download_sector_data failed: %s", e)
+            return False
+
+    def download_holiday_data(self) -> bool:
+        """Download holiday calendar data.
+
+        Returns True on success, False on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            xtdata.download_holiday_data()
+            return True
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.download_holiday_data failed: %s", e)
+            return False
+
+    def download_cb_data(self, codes: "list[str] | None" = None) -> bool:
+        """Download convertible bond data.
+
+        Returns True on success, False on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            if codes is not None:
+                xtdata.download_cb_data(stock_list=codes)
+            else:
+                xtdata.download_cb_data()
+            return True
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.download_cb_data failed: %s", e)
+            return False
+
+    def download_etf_info(self, codes: "list[str] | None" = None) -> bool:
+        """Download ETF metadata.
+
+        Returns True on success, False on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            if codes is not None:
+                xtdata.download_etf_info(stock_list=codes)
+            else:
+                xtdata.download_etf_info()
+            return True
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.download_etf_info failed: %s", e)
+            return False
+
+    def download_history_contracts(self) -> bool:
+        """Download historical futures/options contract specs.
+
+        Returns True on success, False on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            xtdata.download_history_contracts()
+            return True
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.download_history_contracts failed: %s", e)
+            return False
+
+    # ------------------------------------------------------------------
+    # Group 4: Sector / watchlist management
+    # ------------------------------------------------------------------
+
+    def create_sector_folder(self, folder_name: str) -> bool:
+        """Create a sector folder.
+
+        Returns True on success, False on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            xtdata.create_sector_folder(folder_name)
+            return True
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.create_sector_folder(%s) failed: %s", folder_name, e)
+            return False
+
+    def create_sector(self, sector_name: str) -> bool:
+        """Create a new sector.
+
+        Returns True on success, False on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            xtdata.create_sector(sector_name)
+            return True
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.create_sector(%s) failed: %s", sector_name, e)
+            return False
+
+    def add_stock_to_sector(self, sector_name: str, codes: list[str]) -> bool:
+        """Add stocks to an existing sector.
+
+        Returns True on success, False on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            xtdata.add_sector(sector_name=sector_name, stock_list=codes)
+            return True
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.add_stock_to_sector(%s) failed: %s", sector_name, e)
+            return False
+
+    def remove_stock_from_sector(self, sector_name: str, codes: list[str]) -> bool:
+        """Remove stocks from a sector.
+
+        Returns True on success, False on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            xtdata.remove_stock_from_sector(sector_name=sector_name, stock_list=codes)
+            return True
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.remove_stock_from_sector(%s) failed: %s", sector_name, e)
+            return False
+
+    def remove_sector(self, sector_name: str) -> bool:
+        """Delete a sector entirely.
+
+        Returns True on success, False on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            xtdata.remove_sector(sector_name)
+            return True
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.remove_sector(%s) failed: %s", sector_name, e)
+            return False
+
+    def reset_sector(self, sector_name: str, codes: list[str]) -> bool:
+        """Replace entire sector contents with a new stock list.
+
+        Returns True on success, False on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            xtdata.reset_sector(sector_name=sector_name, stock_list=codes)
+            return True
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.reset_sector(%s) failed: %s", sector_name, e)
+            return False
+
+    # ------------------------------------------------------------------
+    # Group 5: Formula engine
+    # ------------------------------------------------------------------
+
+    def call_formula(
+        self,
+        formula_name: str,
+        code: str,
+        period: str,
+        start: str = "",
+        end: str = "",
+        count: int = -1,
+        **params,
+    ) -> "pl.DataFrame":
+        """Evaluate a named formula / indicator for a single code.
+
+        Returns indicator values as a Polars DataFrame.
+        Returns empty DataFrame on error.
+        """
+        if not _POLARS_AVAILABLE:
+            return []  # type: ignore
+
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.call_formula: xtdata unavailable: %s", e)
+            return pl.DataFrame()
+
+        try:
+            raw = xtdata.call_formula(
+                formula_name=formula_name,
+                stock_code=code,
+                period=period,
+                start_time=start,
+                end_time=end,
+                count=count,
+                **params,
+            )
+        except Exception as e:
+            logger.error("XtDataBridge.call_formula(%s, %s) failed: %s", formula_name, code, e)
+            return pl.DataFrame()
+
+        if not raw:
+            return pl.DataFrame()
+
+        try:
+            if isinstance(raw, dict):
+                return pl.DataFrame(raw)
+            if isinstance(raw, list):
+                return pl.DataFrame(raw)
+            return pl.DataFrame()
+        except Exception as e:
+            logger.error("XtDataBridge.call_formula: DataFrame build failed: %s", e)
+            return pl.DataFrame()
+
+    def call_formula_batch(
+        self,
+        formula_name: str,
+        codes: list[str],
+        period: str,
+        start: str = "",
+        end: str = "",
+        count: int = -1,
+        **params,
+    ) -> "pl.DataFrame":
+        """Batch-evaluate a named formula / indicator for multiple codes.
+
+        Returns indicator values as a Polars DataFrame.
+        Returns empty DataFrame on error.
+        """
+        if not _POLARS_AVAILABLE:
+            return []  # type: ignore
+
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.call_formula_batch: xtdata unavailable: %s", e)
+            return pl.DataFrame()
+
+        try:
+            raw = xtdata.call_formula_batch(
+                formula_name=formula_name,
+                stock_list=codes,
+                period=period,
+                start_time=start,
+                end_time=end,
+                count=count,
+                **params,
+            )
+        except Exception as e:
+            logger.error("XtDataBridge.call_formula_batch(%s) failed: %s", formula_name, e)
+            return pl.DataFrame()
+
+        if not raw:
+            return pl.DataFrame()
+
+        try:
+            if isinstance(raw, dict):
+                return pl.DataFrame(raw)
+            if isinstance(raw, list):
+                return pl.DataFrame(raw)
+            return pl.DataFrame()
+        except Exception as e:
+            logger.error("XtDataBridge.call_formula_batch: DataFrame build failed: %s", e)
+            return pl.DataFrame()
+
+    def subscribe_formula(
+        self,
+        formula_name: str,
+        codes: list[str],
+        period: str,
+        callback: "Callable | None" = None,
+        **params,
+    ) -> int:
+        """Subscribe to real-time formula / indicator updates.
+
+        Returns subscription id, -1 on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            seq = xtdata.subscribe_formula(
+                formula_name=formula_name,
+                stock_list=codes,
+                period=period,
+                callback=callback,
+                **params,
+            )
+            return int(seq) if seq is not None else -1
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.subscribe_formula(%s) failed: %s", formula_name, e)
+            return -1
+
+    def unsubscribe_formula(self, seq: int) -> bool:
+        """Unsubscribe a formula subscription by id.
+
+        Returns True on success, False on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            xtdata.unsubscribe_formula(seq)
+            return True
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.unsubscribe_formula(%s) failed: %s", seq, e)
+            return False
+
+    def generate_index_data(
+        self,
+        index_code: str,
+        constituents: list[str],
+        period: str = "1d",
+    ) -> "pl.DataFrame":
+        """Generate a custom index from constituent stocks.
+
+        Returns a Polars DataFrame with the synthesised index data.
+        Returns empty DataFrame on error.
+        """
+        if not _POLARS_AVAILABLE:
+            return []  # type: ignore
+
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.generate_index_data: xtdata unavailable: %s", e)
+            return pl.DataFrame()
+
+        try:
+            raw = xtdata.generate_index_data(
+                index_code=index_code,
+                stock_list=constituents,
+                period=period,
+            )
+        except Exception as e:
+            logger.error("XtDataBridge.generate_index_data(%s) failed: %s", index_code, e)
+            return pl.DataFrame()
+
+        if not raw:
+            return pl.DataFrame()
+
+        try:
+            if isinstance(raw, dict):
+                return pl.DataFrame(raw)
+            if isinstance(raw, list):
+                return pl.DataFrame(raw)
+            return pl.DataFrame()
+        except Exception as e:
+            logger.error("XtDataBridge.generate_index_data: DataFrame build failed: %s", e)
+            return pl.DataFrame()
+
+    # ------------------------------------------------------------------
+    # Group 6: Utility
+    # ------------------------------------------------------------------
+
+    def get_period_list(self) -> list[str]:
+        """Return list of supported period strings.
+
+        Falls back to a hardcoded list if xtdata does not expose the API.
+        """
+        _FALLBACK = ["tick", "1m", "5m", "15m", "30m", "1h", "1d", "1w", "1mon", "1q", "1hy", "1y"]
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            result = xtdata.get_period_list()
+            if result:
+                return list(result)
+            return _FALLBACK
+        except (ImportError, AttributeError):
+            return _FALLBACK
+        except Exception as e:
+            logger.warning("XtDataBridge.get_period_list failed: %s", e)
+            return _FALLBACK
+
+    def get_ipo_info(
+        self,
+        codes: "list[str] | None" = None,
+        start: str = "",
+        end: str = "",
+    ) -> "pl.DataFrame":
+        """Fetch IPO details (code, name, issue_date, issue_price, etc.).
+
+        Returns empty DataFrame on error.
+        """
+        if not _POLARS_AVAILABLE:
+            return []  # type: ignore
+
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+        except (ImportError, Exception) as e:
+            logger.warning("XtDataBridge.get_ipo_info: xtdata unavailable: %s", e)
+            return pl.DataFrame()
+
+        try:
+            raw = xtdata.get_ipo_info(
+                stock_list=codes,
+                start_time=start,
+                end_time=end,
+            )
+        except Exception as e:
+            logger.error("XtDataBridge.get_ipo_info failed: %s", e)
+            return pl.DataFrame()
+
+        if not raw:
+            return pl.DataFrame()
+
+        try:
+            if isinstance(raw, list):
+                rows = []
+                for item in raw:
+                    if isinstance(item, dict):
+                        rows.append(item)
+                    elif hasattr(item, "__dict__"):
+                        rows.append(vars(item))
+                return pl.DataFrame(rows) if rows else pl.DataFrame()
+            if isinstance(raw, dict):
+                rows = []
+                for code, info in raw.items():
+                    if isinstance(info, dict):
+                        row = {"code": code}
+                        row.update(info)
+                        rows.append(row)
+                return pl.DataFrame(rows) if rows else pl.DataFrame()
+            return pl.DataFrame()
+        except Exception as e:
+            logger.error("XtDataBridge.get_ipo_info: DataFrame build failed: %s", e)
+            return pl.DataFrame()
+
+    def get_trading_calendar(
+        self,
+        exchange: str = "SSE",
+        start: str = "",
+        end: str = "",
+    ) -> list[str]:
+        """Return trading calendar date strings for an exchange.
+
+        Similar to get_trading_dates but may return richer info depending
+        on xtdata version. Returns list of date strings, [] on error.
+        """
+        try:
+            import xtquant.xtdata as xtdata  # type: ignore
+            result = xtdata.get_trading_calendar(
+                market=exchange,
+                start_time=start,
+                end_time=end,
+            )
+            if result is None:
+                return []
+            return [str(d) for d in result]
+        except (ImportError, AttributeError):
+            # Fallback to get_trading_dates if get_trading_calendar not available
+            return self.get_trading_dates(exchange=exchange, start=start, end=end)
+        except Exception as e:
+            logger.warning("XtDataBridge.get_trading_calendar failed: %s", e)
+            return []
