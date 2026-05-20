@@ -10,24 +10,25 @@ from typing import Any
 import requests
 from loguru import logger
 
-_FROZEN_WARN_ONCE = False
-_TRADES_WARN_ONCE = False
-
-
 class DaQMTBridge:
     def __init__(
         self,
         base_url: str = "http://127.0.0.1:9000",
         timeout: float = 5.0,
         account: str = "stock",
+        secret: str = "",
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.account = account
+        self._frozen_warned = False
+        self._trades_warned = False
         self.session = requests.Session()
         self.session.headers.update(
             {"Content-Type": "application/json; charset=utf-8"}
         )
+        if secret:
+            self.session.headers.update({"X-Bridge-Secret": secret})
 
     # ------------------------------------------------------------------ #
     # internal helpers
@@ -88,7 +89,7 @@ class DaQMTBridge:
         """Ping /api/money/total — 失败返回 False 不 raise。"""
         url = f"{self.base_url}/api/money/total"
         try:
-            resp = self.session.get(url, timeout=2.0)
+            resp = self.session.get(url, timeout=min(2.0, self.timeout))
             resp.raise_for_status()
             resp.json()
             return True
@@ -97,8 +98,6 @@ class DaQMTBridge:
 
     def get_balance(self) -> dict:
         """合并 /api/money/total + /api/money/available。"""
-        global _FROZEN_WARN_ONCE
-
         total_raw = self._get("/api/money/total")
         avail_raw = self._get("/api/money/available")
 
@@ -113,17 +112,10 @@ class DaQMTBridge:
             or 0.0
         )
 
-        if not _FROZEN_WARN_ONCE:
-            logger.warning(
-                "DaQMTBridge: server does not expose frozen_cash/market_value; "
-                "defaulting to 0.0"
-            )
-            _FROZEN_WARN_ONCE = True
-
         return {
             "available": available,
-            "frozen_cash": 0.0,
-            "market_value": 0.0,
+            "frozen_cash": None,   # server does not expose this field
+            "market_value": None,  # server does not expose this field
             "total_asset": total_asset,
             "raw": {"total": total_raw, "available": avail_raw},
         }
@@ -214,17 +206,17 @@ class DaQMTBridge:
                 entry["code"] = self._pick(
                     o, "StockCode", "stock_code", "stock", default=""
                 )
+            entry.setdefault("strategy_name", None)
             normalized.append(entry)
         return normalized
 
     def get_today_trades(self) -> list[dict]:
         """大QMT server 暂无 trades 端点 — 返回 []。"""
-        global _TRADES_WARN_ONCE
-        if not _TRADES_WARN_ONCE:
+        if not self._trades_warned:
             logger.warning(
                 "DaQMTBridge: server has no trades endpoint; returning []"
             )
-            _TRADES_WARN_ONCE = True
+            self._trades_warned = True
         return []
 
     def buy(
@@ -269,3 +261,19 @@ class DaQMTBridge:
     def cancel_all(self) -> dict:
         """POST /api/order/cancel_all."""
         return self._post("/api/order/cancel_all")
+
+    def cancel_by_id(self, order_sys_id: str) -> dict:
+        """POST /api/order/cancel_by_id — cancel by exact order system ID.
+
+        Preferred over cancel(code, volume) when the order may be partially filled.
+        """
+        try:
+            resp = self._post("/api/order/cancel_by_id", {"order_sys_id": order_sys_id})
+            return resp if resp else {"error": "empty response"}
+        except Exception as e:
+            logger.error(f"DaQMTBridge cancel_by_id({order_sys_id}) failed: {e}")
+            return {"error": str(e)}
+
+    def disconnect(self) -> None:
+        """Close the underlying requests.Session connection pool."""
+        self.session.close()
