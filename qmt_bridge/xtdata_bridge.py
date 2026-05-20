@@ -1094,6 +1094,25 @@ class XtDataBridge:
             logger.error("XtDataBridge.get_cb_info: DataFrame build failed: %s", e)
             return pl.DataFrame()
 
+    def download_history_data(
+        self, code: str, period: str = "1d", start: str = "", end: str = ""
+    ) -> bool:
+        """Single-stock historical data download (legacy API).
+
+        Prefer download() or download_with_progress() for batch downloads.
+        """
+        try:
+            xtdata = self._get_xtdata()
+            if xtdata is None:
+                return False
+            xtdata.download_history_data(
+                stock_code=code, period=period, start_time=start, end_time=end
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"XtDataBridge.download_history_data({code}) failed: {e}")
+            return False
+
     # ------------------------------------------------------------------
     # Download with progress
     # ------------------------------------------------------------------
