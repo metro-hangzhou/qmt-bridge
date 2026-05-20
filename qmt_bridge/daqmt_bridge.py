@@ -5,10 +5,26 @@ client. Both sides ship in the same package so versions stay aligned.
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import requests
 from loguru import logger
+
+from .constants import ORDER_TYPE_LIMIT, STATUS_PENDING, STATUS_PARTIAL
+
+
+def _safe_cb(cb, method: str, *args) -> None:
+    if cb is None:
+        return
+    fn = getattr(cb, method, None)
+    if fn is None:
+        return
+    try:
+        fn(*args)
+    except Exception as e:
+        logger.warning(f"DaQMTBridge callback {method} raised: {e}")
+
 
 class DaQMTBridge:
     def __init__(
@@ -28,6 +44,13 @@ class DaQMTBridge:
         )
         if secret:
             self.session.headers.update({"X-Bridge-Secret": secret})
+
+        # Callback + polling monitor
+        self._callback: Any = None
+        self._monitor_thread: threading.Thread | None = None
+        self._monitor_stop = threading.Event()
+        self._order_snapshot: dict[str, dict] = {}
+        self._monitor_lock = threading.Lock()
 
     # ------------------------------------------------------------------ #
     # internal helpers
@@ -289,4 +312,93 @@ class DaQMTBridge:
 
     def disconnect(self) -> None:
         """Close the underlying requests.Session connection pool."""
+        self.stop_monitor()
         self.session.close()
+
+    # ── callback / order monitor ────────────────────────────────────────────
+
+    def register_callback(self, callback) -> None:
+        """Register a BridgeCallback-compatible object.
+
+        After registering, call start_monitor() to begin receiving push events.
+        The callback is invoked on the monitor background thread.
+        """
+        self._callback = callback
+
+    def start_monitor(self, interval: float = 1.0) -> None:
+        """Start background polling thread for order state changes.
+
+        Polls get_today_orders() every `interval` seconds and fires:
+          callback.on_order(order)  — new order or status/fill change
+          callback.on_trade(trade)  — synthetic trade event on fill increase
+
+        Safe to call multiple times; only one thread runs at a time.
+        """
+        if self._monitor_thread and self._monitor_thread.is_alive():
+            return
+        self._monitor_stop.clear()
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_loop,
+            args=(interval,),
+            daemon=True,
+            name="daqmt-monitor",
+        )
+        self._monitor_thread.start()
+        logger.debug(f"DaQMTBridge monitor started (interval={interval}s)")
+
+    def stop_monitor(self) -> None:
+        """Stop the background polling thread."""
+        self._monitor_stop.set()
+        t = self._monitor_thread
+        if t and t.is_alive():
+            t.join(timeout=5.0)
+        self._monitor_thread = None
+        logger.debug("DaQMTBridge monitor stopped")
+
+    def _monitor_loop(self, interval: float) -> None:
+        while not self._monitor_stop.wait(interval):
+            try:
+                self._poll_orders()
+            except Exception as e:
+                logger.warning(f"DaQMTBridge._monitor_loop error: {e}")
+
+    def _poll_orders(self) -> None:
+        if self._callback is None:
+            return
+        try:
+            orders = self.get_today_orders()
+        except Exception:
+            return
+
+        with self._monitor_lock:
+            new_snap: dict[str, dict] = {}
+            for o in orders:
+                oid = str(o.get("order_id", "") or "")
+                if not oid:
+                    continue
+                new_snap[oid] = o
+                prev = self._order_snapshot.get(oid)
+
+                if prev is None:
+                    _safe_cb(self._callback, "on_order", o)
+                else:
+                    prev_status  = prev.get("status")
+                    prev_filled  = int(prev.get("filled_volume", 0) or 0)
+                    curr_status  = o.get("status")
+                    curr_filled  = int(o.get("filled_volume", 0) or 0)
+
+                    if prev_status != curr_status or prev_filled != curr_filled:
+                        _safe_cb(self._callback, "on_order", o)
+
+                    if curr_filled > prev_filled:
+                        trade = {
+                            "order_id":  oid,
+                            "code":      o.get("code", ""),
+                            "direction": o.get("direction", ""),
+                            "price":     o.get("price", 0.0),
+                            "volume":    curr_filled - prev_filled,
+                            "trade_time": o.get("order_time", ""),
+                        }
+                        _safe_cb(self._callback, "on_trade", trade)
+
+            self._order_snapshot = new_snap

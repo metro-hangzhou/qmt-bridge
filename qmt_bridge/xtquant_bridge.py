@@ -182,47 +182,31 @@ class XtQuantBridge:
 
     # ---------------- trading ----------------
 
-    def buy(self, code: str, price: float, volume: int) -> dict:
-        """限价买入。返回 {"order_id": id, "status": "submitted"} 或 {"error": str}。"""
+    def buy(self, code: str, price: float, volume: int, price_type: int = 11) -> dict:
+        """买入。price_type=11 限价，price_type=5 市价。
+        返回 {"order_id": id, "status": "submitted"} 或 {"error": str}。"""
         if not self.is_available():
             return {"error": "XtQuantBridge not connected"}
         try:
-            from xtquant import xtconstant  # type: ignore
-
             order_id = self.xt_trader.order_stock(
-                self.account,
-                code,
-                xtconstant.STOCK_BUY,
-                volume,
-                xtconstant.FIX_PRICE,
-                price,
+                self.account, code, 23, volume, price_type, price,
             )
-            logger.info(
-                f"XtQuantBridge buy: {code} @ {price} x {volume}, order_id={order_id}"
-            )
+            logger.info(f"XtQuantBridge buy: {code} @ {price} x {volume} type={price_type}, order_id={order_id}")
             return {"order_id": order_id, "status": "submitted"}
         except Exception as e:
             logger.error(f"XtQuantBridge buy error: {e}")
             return {"error": str(e)}
 
-    def sell(self, code: str, price: float, volume: int) -> dict:
-        """限价卖出。返回 {"order_id": id, "status": "submitted"} 或 {"error": str}。"""
+    def sell(self, code: str, price: float, volume: int, price_type: int = 11) -> dict:
+        """卖出。price_type=11 限价，price_type=5 市价。
+        返回 {"order_id": id, "status": "submitted"} 或 {"error": str}。"""
         if not self.is_available():
             return {"error": "XtQuantBridge not connected"}
         try:
-            from xtquant import xtconstant  # type: ignore
-
             order_id = self.xt_trader.order_stock(
-                self.account,
-                code,
-                xtconstant.STOCK_SELL,
-                volume,
-                xtconstant.FIX_PRICE,
-                price,
+                self.account, code, 24, volume, price_type, price,
             )
-            logger.info(
-                f"XtQuantBridge sell: {code} @ {price} x {volume}, order_id={order_id}"
-            )
+            logger.info(f"XtQuantBridge sell: {code} @ {price} x {volume} type={price_type}, order_id={order_id}")
             return {"order_id": order_id, "status": "submitted"}
         except Exception as e:
             logger.error(f"XtQuantBridge sell error: {e}")
