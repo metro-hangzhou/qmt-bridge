@@ -103,12 +103,12 @@ class DaQMTBridge:
         avail_raw = self._get("/api/money/available")
 
         total_asset = float(
-            self._pick(total_raw, "total", "total_asset", "money", default=0.0)
+            self._pick(total_raw, "total_money", "total", "total_asset", "money", default=0.0)
             or 0.0
         )
         available = float(
             self._pick(
-                avail_raw, "available", "money", "available_cash", default=0.0
+                avail_raw, "available_money", "available", "money", "available_cash", default=0.0
             )
             or 0.0
         )

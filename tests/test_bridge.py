@@ -107,8 +107,8 @@ class TestDaQMTBridgeBalance:
         assert result["available"] == 30000.0
 
     @responses_lib.activate
-    def test_get_balance_zeros_on_unknown_keys(self):
-        """total_money is NOT in _pick list -> should default to 0."""
+    def test_get_balance_server_keys(self):
+        """total_money / available_money are the actual server key names."""
         responses_lib.add(
             responses_lib.GET,
             f"{BASE}/api/money/total",
@@ -123,9 +123,8 @@ class TestDaQMTBridgeBalance:
         )
         bridge = DaQMTBridge(base_url=BASE)
         result = bridge.get_balance()
-        # Neither key is in _pick list -> default 0.0
-        assert result["total_asset"] == 0.0
-        assert result["available"] == 0.0
+        assert result["total_asset"] == 123456.0
+        assert result["available"] == 50000.0
 
 
 class TestDaQMTBridgePositions:
