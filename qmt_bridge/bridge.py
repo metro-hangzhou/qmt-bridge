@@ -5,6 +5,7 @@ from loguru import logger
 
 from .daqmt_bridge import DaQMTBridge
 from .xtquant_bridge import XtQuantBridge
+from .xtdata_bridge import XtDataBridge
 
 
 Mode = Literal["auto", "daqmt", "miniqmt"]
@@ -32,6 +33,14 @@ class QMTBridge:
         self._xtquant: XtQuantBridge | None = None
         self._active: DaQMTBridge | XtQuantBridge | None = None
         self._active_mode: str = "none"
+        self._data: XtDataBridge | None = None
+
+    @property
+    def data(self) -> XtDataBridge:
+        """Lazy-initialized XtDataBridge for in-process market data."""
+        if self._data is None:
+            self._data = XtDataBridge(self.config)
+        return self._data
 
     def connect(self) -> bool:
         if self.mode == "daqmt":

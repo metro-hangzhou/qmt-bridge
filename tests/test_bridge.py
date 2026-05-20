@@ -619,14 +619,23 @@ class TestQMTBridgeAutoMode:
 
 
 class TestDaQMTBridgeInstanceFlags:
-    def test_trades_warn_is_per_instance(self):
-        """Two DaQMTBridge instances have independent _trades_warned flags."""
-        b1 = DaQMTBridge(base_url=BASE)
-        b2 = DaQMTBridge(base_url=BASE)
-        assert b1._trades_warned is False
-        b1.get_today_trades()
-        assert b1._trades_warned is True
-        assert b2._trades_warned is False  # independent
+    @responses_lib.activate
+    def test_get_today_trades_real_endpoint(self):
+        """get_today_trades() calls /api/trade/status and normalizes response."""
+        responses_lib.add(
+            responses_lib.GET,
+            f"{BASE}/api/trade/status",
+            json={"trades": [{"trade_id": "T1", "code": "600519.SH",
+                              "direction": "buy", "price": 1800.0,
+                              "volume": 100, "amount": 180000.0,
+                              "trade_time": "2026-05-21 09:31:00"}]},
+            status=200,
+        )
+        bridge = DaQMTBridge(base_url=BASE)
+        trades = bridge.get_today_trades()
+        assert len(trades) == 1
+        assert trades[0]["code"] == "600519.SH"
+        assert trades[0]["direction"] == "buy"
 
     def test_disconnect_closes_session(self):
         bridge = DaQMTBridge(base_url=BASE)

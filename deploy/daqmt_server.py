@@ -185,6 +185,31 @@ def _query_orders(accountID, account_type):
         return []
 
 
+def _query_trades(accountID, account_type):
+    try:
+        rows = get_trade_detail_data(accountID, account_type, 'trade', 'qmt')
+        return rows or []
+    except Exception as exc:
+        logger.error('_query_trades failed: %s', exc)
+        return []
+
+
+def _trade_to_dict(t) -> dict:
+    direction_raw = _safe_int(getattr(t, 'm_nOffsetFlag', getattr(t, 'm_nDirection', 0)))
+    direction = 'buy' if direction_raw == 48 else 'sell'
+    return {
+        'trade_id':   getattr(t, 'm_strTradeID', '') or '',
+        'order_id':   getattr(t, 'm_strOrderSysID', '') or '',
+        'code':       getattr(t, 'm_strInstrumentID', '') or '',
+        'exchange':   getattr(t, 'm_strExchangeID', '') or '',
+        'direction':  direction,
+        'price':      _safe_float(getattr(t, 'm_dPrice', 0.0)),
+        'volume':     _safe_int(getattr(t, 'm_nVolume', 0)),
+        'amount':     _safe_float(getattr(t, 'm_dTradeAmount', 0.0)),
+        'trade_time': getattr(t, 'm_strTradeTime', '') or '',
+    }
+
+
 # ---------------------------------------------------------------------------
 # tornado handlers
 # ---------------------------------------------------------------------------
@@ -273,6 +298,21 @@ class OrderStatusHandler(BaseHandler):
             except Exception as exc:
                 logger.error('order serialization failed: %s', exc)
         self.write_json({'orders': out})
+
+
+class TradeStatusHandler(BaseHandler):
+    """GET /api/trade/status?account=stock -> {trades: [...]}"""
+
+    def get(self):
+        account_type = _account_type(self.get_argument('account', 'stock'))
+        trades = _query_trades(self._account(), account_type)
+        out = []
+        for t in trades:
+            try:
+                out.append(_trade_to_dict(t))
+            except Exception as exc:
+                logger.error('trade serialization failed: %s', exc)
+        self.write_json({'trades': out})
 
 
 def _parse_json_body(handler):
@@ -474,6 +514,7 @@ def make_app():
         (r'/api/order/cancel_all', CancelAllHandler),
         (r'/api/order/cancel_order', CancelOrderHandler),
         (r'/api/order/cancel_by_id', CancelByIdHandler),
+        (r'/api/trade/status', TradeStatusHandler),
     ])
 
 

@@ -22,7 +22,6 @@ class DaQMTBridge:
         self.timeout = timeout
         self.account = account
         self._frozen_warned = False
-        self._trades_warned = False
         self.session = requests.Session()
         self.session.headers.update(
             {"Content-Type": "application/json; charset=utf-8"}
@@ -211,13 +210,28 @@ class DaQMTBridge:
         return normalized
 
     def get_today_trades(self) -> list[dict]:
-        """大QMT server 暂无 trades 端点 — 返回 []。"""
-        if not self._trades_warned:
-            logger.warning(
-                "DaQMTBridge: server has no trades endpoint; returning []"
-            )
-            self._trades_warned = True
-        return []
+        """GET /api/trade/status -> list of trades (schema-normalized)."""
+        raw = self._get("/api/trade/status")
+        if not isinstance(raw, dict):
+            return []
+        trades = raw.get("trades", [])
+        if not isinstance(trades, list):
+            return []
+        normalized = []
+        for t in trades:
+            if not isinstance(t, dict):
+                continue
+            entry = dict(t)
+            entry.setdefault("trade_id", "")
+            entry.setdefault("order_id", "")
+            entry.setdefault("code", self._pick(t, "StockCode", "stock_code", default=""))
+            entry.setdefault("direction", "unknown")
+            entry.setdefault("price", 0.0)
+            entry.setdefault("volume", 0)
+            entry.setdefault("traded_amount", entry.get("amount", 0.0))
+            entry.setdefault("trade_time", "")
+            normalized.append(entry)
+        return normalized
 
     def buy(
         self, code: str, price: float, volume: int, pr_type: int = 11
