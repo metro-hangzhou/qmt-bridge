@@ -110,19 +110,34 @@ class QMTBridge:
         return self._xtquant.sell(code, price, volume)
 
     def cancel(self, **kwargs) -> Any:
-        """大QMT 用 code+volume，miniQMT 用 order_id。
-        kwargs 接受任意一种，根据 active 模式分发。"""
         if not self._active:
             return {"error": "not connected"}
         if self._active_mode == "daqmt":
+            if "code" not in kwargs or "volume" not in kwargs:
+                return {"error": "daqmt mode requires code= and volume= kwargs"}
             return self._daqmt.cancel(kwargs["code"], kwargs["volume"])
-        return self._xtquant.cancel(kwargs["order_id"])
+        if self._active_mode == "miniqmt":
+            if "order_id" not in kwargs:
+                return {"error": "miniqmt mode requires order_id= kwarg"}
+            ok = self._xtquant.cancel(kwargs["order_id"])
+            return {"status": "success" if ok else "error", "order_id": kwargs.get("order_id")}
+        return {"error": "not connected"}
+
+    def cancel_by_id(self, order_sys_id: str) -> dict:
+        """Cancel by exact order_sys_id. daqmt only (miniQMT uses integer order_id via cancel())."""
+        if not self._active:
+            return {"error": "not connected"}
+        if self._active_mode == "daqmt":
+            return self._daqmt.cancel_by_id(order_sys_id)
+        if self._active_mode == "miniqmt":
+            return {"error": "miniqmt uses cancel(order_id=int), not cancel_by_id"}
+        return {"error": "not connected"}
 
     def cancel_all(self) -> dict:
         if self._active_mode == "daqmt":
             return self._daqmt.cancel_all()
         # miniQMT 没有 cancel_all：遍历 orders 逐个 cancel
-        if self._active_mode == "miniqmt":
+        if self._active_mode == "miniqmt" and self._xtquant is not None:
             orders = self._xtquant.get_today_orders()
             canceled = []
             for o in orders:
@@ -132,7 +147,9 @@ class QMTBridge:
         return {"error": "not connected"}
 
     def disconnect(self) -> None:
-        if self._active_mode == "miniqmt" and self._xtquant:
+        if self._active_mode == "daqmt" and self._daqmt is not None:
+            self._daqmt.disconnect()
+        if self._active_mode == "miniqmt" and self._xtquant is not None:
             self._xtquant.disconnect()
         self._active = None
         self._active_mode = "none"
