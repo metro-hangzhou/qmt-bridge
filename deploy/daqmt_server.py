@@ -503,6 +503,24 @@ class CancelByIdHandler(BaseHandler):
 # app factory + entrypoint
 # ---------------------------------------------------------------------------
 
+class DebugContextHandler(BaseHandler):
+    """GET /api/debug/context -> dump ContextInfo attributes (dev only)."""
+
+    def get(self):
+        ctx = self._ctx()
+        attrs = {}
+        for name in dir(ctx):
+            if name.startswith('__'):
+                continue
+            try:
+                val = getattr(ctx, name)
+                if not callable(val):
+                    attrs[name] = str(val)
+            except Exception:
+                pass
+        self.write_json({'accountID_used': self._account(), 'attrs': attrs})
+
+
 def make_app():
     return tornado.web.Application([
         (r'/api/holding', HoldingHandler),
@@ -515,6 +533,7 @@ def make_app():
         (r'/api/order/cancel_order', CancelOrderHandler),
         (r'/api/order/cancel_by_id', CancelByIdHandler),
         (r'/api/trade/status', TradeStatusHandler),
+        (r'/api/debug/context', DebugContextHandler),
     ])
 
 
@@ -533,7 +552,32 @@ def init(ContextInfo):
 
     app = make_app()
     app.ContextInfo = ContextInfo
-    app.accountID = ContextInfo.accountID
+    # Different DaQMT versions expose the account ID under different names.
+    account_id = (
+        getattr(ContextInfo, 'accountID', None)
+        or getattr(ContextInfo, 'accountid', None)
+        or getattr(ContextInfo, 'account_id', None)
+        or getattr(ContextInfo, 'strAccountID', None)
+        or ''
+    )
+    if not account_id:
+        # Last resort: pull from the first account returned by the trade API.
+        try:
+            rows = get_trade_detail_data('', 'stock', 'account', 'qmt')
+            if rows:
+                account_id = (
+                    getattr(rows[0], 'm_strAccountID', None)
+                    or getattr(rows[0], 'accountID', None)
+                    or getattr(rows[0], 'accountid', None)
+                    or ''
+                )
+        except Exception as _e:
+            logger.warning('account discovery failed: %s', _e)
+    # Hardcoded fallback — edit this to match your brokerage account number.
+    if not account_id:
+        account_id = '603010000249'
+    app.accountID = account_id
+    logger.info('DaQMT accountID resolved: %r', account_id)
     app.listen(9000, address='127.0.0.1')
     logger.info('DaQMT HTTP Server: http://127.0.0.1:9000')
     IOLoop.current().start()

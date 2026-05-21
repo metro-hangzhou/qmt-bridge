@@ -108,12 +108,11 @@ class DaQMTBridge:
     # public API
     # ------------------------------------------------------------------ #
     def is_available(self) -> bool:
-        """Ping /api/money/total — 失败返回 False 不 raise。"""
+        """Ping server — any HTTP response (incl. 5xx) means the server is up."""
         url = f"{self.base_url}/api/money/total"
         try:
             resp = self.session.get(url, timeout=min(2.0, self.timeout))
-            resp.raise_for_status()
-            resp.json()
+            resp.json()  # must parse as JSON; connection errors still return False
             return True
         except Exception:
             return False
