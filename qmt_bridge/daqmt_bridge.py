@@ -29,7 +29,7 @@ def _safe_cb(cb, method: str, *args) -> None:
 class DaQMTBridge:
     def __init__(
         self,
-        base_url: str = "http://127.0.0.1:9000",
+        base_url: str = "http://127.0.0.1:9001",
         timeout: float = 5.0,
         account: str = "stock",
         secret: str = "",

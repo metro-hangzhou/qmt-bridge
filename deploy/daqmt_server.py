@@ -578,8 +578,9 @@ def init(ContextInfo):
         account_id = '603010000249'
     app.accountID = account_id
     logger.info('DaQMT accountID resolved: %r', account_id)
-    app.listen(9000, address='127.0.0.1')
-    logger.info('DaQMT HTTP Server: http://127.0.0.1:9000')
+    port = int(os.environ.get('DAQMT_PORT', '9001'))
+    app.listen(port, address='127.0.0.1')
+    logger.info('DaQMT HTTP Server: http://127.0.0.1:%d', port)
     IOLoop.current().start()
 
 
